@@ -93,6 +93,36 @@ Dependabot is configured to automatically monitor and update dependencies:
 
 ---
 
+## 📦 Release pipeline (supply-chain security)
+
+Tagging `v*` triggers `release.yml`, which produces a signed, attested, inventoried image:
+
+1. **Build and push to GHCR** with `provenance: true`, so buildx emits SLSA provenance
+   attestations alongside the image.
+2. **Generate an SBOM with Syft** against the pushed image, in SPDX JSON.
+3. **Scan the image with Trivy** for HIGH/CRITICAL CVEs and upload SARIF to the Security tab.
+4. **Sign with cosign, keyless** via Sigstore — no long-lived signing key exists to be stolen.
+   Identity comes from the workflow's OIDC token (`id-token: write`), and the signature is
+   recorded in the public Rekor transparency log. Both the version tag and `latest` are signed,
+   with three retries and a cached TUF root, because Sigstore's good-availability-but-not-perfect
+   record will otherwise fail a release on a transient error.
+5. **Create a GitHub Release** with generated notes and the SBOM attached.
+
+Verify a published image yourself:
+
+```bash
+cosign verify ghcr.io/adi-czobel/demo:latest \
+  --certificate-identity-regexp "^https://github.com/Adi-Czobel/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Keyless signing is the part worth noticing. The common alternative — a cosign private key in
+a repository secret — means a single secret exfiltration lets an attacker sign malicious
+images that verify correctly. Keyless removes the standing credential entirely; the signing
+identity is a short-lived certificate bound to this repository and this workflow.
+
+---
+
 ## 🛡️ Pipeline design decisions
 
 **Least-privilege workflow tokens.** Every workflow declares an explicit `permissions:` block
