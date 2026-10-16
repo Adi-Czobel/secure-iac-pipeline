@@ -7,108 +7,53 @@
 [![Dependabot Badge](https://github.com/Adi-Czobel/Demo/actions/workflows/dependabot-badge.yml/badge.svg?branch=main)](https://github.com/Adi-Czobel/Demo/actions/workflows/dependabot-badge.yml)
 [![Update Badges](https://github.com/Adi-Czobel/Demo/actions/workflows/update-badges.yml/badge.svg?branch=main)](https://github.com/Adi-Czobel/Demo/actions/workflows/update-badges.yml)
 
+A practice repo for shift-left security: every push and pull request runs through a stack of
+scanners before anything can merge, and tagged releases produce a signed container image with
+a bill of materials attached.
 
-
-
-> **Note:** The Dependabot badge will update once the `dependabot-badge.yml` workflow runs at least once.
-
-A reference infrastructure-as-code repository where every change is run through a layered set
-of security and quality checks in GitHub Actions.
-
-**The pipeline is the point, not the infrastructure.** The Terraform here is a deliberately
-trivial `null_resource` and the Dockerfile is a three-line Alpine stub. What is being
-demonstrated is the control set that wraps them — the same workflows drop into a real repo
+The point of this repo is the pipeline, not the infrastructure. The Terraform is a one-line
+placeholder and the Dockerfile is three lines of Alpine. They exist so the scanners have
+something to scan. The workflows are the actual work, and they drop into a real project
 unchanged.
 
----
+## What runs, and when
 
-## 🛡️ Control set
+**On every pull request** (these block the merge if they fail):
 
-| Layer | Tool | Catches | Blocks merge? |
-|---|---|---|---|
-| IaC misconfiguration | **Checkov** (terraform, kubernetes) | Public buckets, unrestricted ingress, missing encryption, unsafe pod specs | ✅ Yes |
-| Terraform correctness | **`terraform fmt` / `validate`** | Formatting drift, syntax and schema errors | ✅ Yes |
-| Dockerfile hygiene | **Hadolint** | Root users, unpinned base tags, `ADD` misuse | ✅ Yes |
-| Vulnerable dependencies in a PR | **Dependency Review** | Known-vulnerable packages introduced by the diff | ✅ Yes (PRs) |
-| SAST | **CodeQL** | Injection, unsafe deserialisation, taint-flow bugs | ⚠️ Reports only |
-| SCA + IaC + image CVEs | **Trivy** (filesystem and image) | HIGH/CRITICAL CVEs, ignoring unfixed | ⚠️ Reports only |
-| Committed secrets | **gitleaks** (full history, `fetch-depth: 0`) | API keys and tokens in the diff *and* in history | ⚠️ Reports only |
-| Supply chain inventory | **Anchore SBOM** | Produces an SPDX SBOM as a build artifact | ℹ️ Artifact |
-| Dependency drift | **Dependabot** | Stale Actions, npm, and pip dependencies, weekly | ℹ️ Opens PRs |
+- **Checkov** checks the Terraform and Kubernetes files for bad settings, like storage open
+  to the public or a security group that lets anything in
+- **Hadolint** checks the Dockerfile for things like running as root or using an unpinned
+  base image
+- **terraform fmt and validate** catch formatting drift and syntax errors
+- **Dependency Review** flags any package the pull request adds that has a known
+  vulnerability
 
-The "Reports only" rows carry `continue-on-error: true` and upload SARIF to the repository's
-**Security** tab instead of failing the build. That split is deliberate: scanners with a
-meaningful false-positive rate inform, and deterministic checks gate. A noisy scanner wired as
-a hard gate gets disabled within a week, which is strictly worse than one that reports.
+**Also on every push** (these report instead of blocking):
 
----
+- **CodeQL** looks for code-level bugs like injection flaws
+- **Trivy** scans the files and the built image for known CVEs, high and critical only
+- **gitleaks** looks for API keys and passwords committed by mistake
 
-## 🚀 CI/CD Pipeline
+Those three upload their results to the repo's **Security** tab rather than failing the
+build. That split is on purpose. Scanners that produce occasional false positives should
+inform you, not stop you, because a noisy check that blocks merges just gets switched off
+after a week. The deterministic checks are the ones that gate.
 
-This repository includes a robust CI/CD pipeline that automatically validates code quality and security.
+**Weekly**, Dependabot opens pull requests for outdated GitHub Actions, npm packages, and
+pip packages, capped at 10 open at a time.
 
-### **Policy Checks Workflow**
-The **Policy Checks** workflow (`policy.yml`) runs automatically on every pull request and includes:
+## Releases
 
-#### 🐳 Dockerfile Linting  
-- **Runs when**: Dockerfile is present in the repository  
-- **Tool**: Hadolint  
-- **Purpose**: Validates Docker best practices and catches common mistakes  
-- **Checks**: Security vulnerabilities, optimization opportunities, and style consistency  
+Pushing a tag like `v1.0.0` kicks off `release.yml`, which does five things:
 
-#### 🏗️ Terraform Validation  
-- **Runs when**: `.tf` files are present  
-- **Tools**: Terraform CLI with HashiCorp's setup action  
-- **Validations**:  
-  - Format Check: `terraform fmt -check`  
-  - Initialization: Validates syntax without remote state  
-  - Validation: Checks for resource configuration errors  
+1. Builds the image and pushes it to GHCR, with build provenance attached so you can trace
+   where it came from
+2. Generates an SBOM with Syft, which is a list of everything inside the image
+3. Scans that image with Trivy and sends the results to the Security tab
+4. Signs the image with **cosign in keyless mode**
+5. Creates a GitHub Release with the SBOM attached
 
-#### 🔒 Security Scanning (Checkov)  
-- **Runs when**: Terraform or Kubernetes YAML files are present  
-- **Tool**: Checkov by Bridgecrew  
-- **Scope**: Terraform configurations & Kubernetes manifests  
-- **Purpose**: Detects misconfigurations, compliance violations, and best practice deviations  
-
----
-
-## 🤖 Dependency Management
-
-Dependabot is configured to automatically monitor and update dependencies:  
-- GitHub Actions: Weekly updates to workflow dependencies  
-- NPM packages: Weekly updates for Node.js dependencies  
-- Python packages: Weekly updates for pip dependencies  
-- Limit: Maximum 10 open PRs to prevent spam  
-
----
-
-## 📋 Workflow Triggers
-
-### Automatic  
-- Pull Requests: All policy checks run automatically  
-- Scheduled Updates: Dependabot runs weekly  
-
-### Manual  
-- **Workflow Dispatch**: Any workflow can be triggered manually from the [Actions tab](https://github.com/Adi-Czobel/Demo/actions)  
-
----
-
-## 📦 Release pipeline (supply-chain security)
-
-Tagging `v*` triggers `release.yml`, which produces a signed, attested, inventoried image:
-
-1. **Build and push to GHCR** with `provenance: true`, so buildx emits SLSA provenance
-   attestations alongside the image.
-2. **Generate an SBOM with Syft** against the pushed image, in SPDX JSON.
-3. **Scan the image with Trivy** for HIGH/CRITICAL CVEs and upload SARIF to the Security tab.
-4. **Sign with cosign, keyless** via Sigstore — no long-lived signing key exists to be stolen.
-   Identity comes from the workflow's OIDC token (`id-token: write`), and the signature is
-   recorded in the public Rekor transparency log. Both the version tag and `latest` are signed,
-   with three retries and a cached TUF root, because Sigstore's good-availability-but-not-perfect
-   record will otherwise fail a release on a transient error.
-5. **Create a GitHub Release** with generated notes and the SBOM attached.
-
-Verify a published image yourself:
+Anyone can check the signature:
 
 ```bash
 cosign verify ghcr.io/adi-czobel/demo:latest \
@@ -116,87 +61,59 @@ cosign verify ghcr.io/adi-czobel/demo:latest \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Keyless signing is the part worth noticing. The common alternative — a cosign private key in
-a repository secret — means a single secret exfiltration lets an attacker sign malicious
-images that verify correctly. Keyless removes the standing credential entirely; the signing
-identity is a short-lived certificate bound to this repository and this workflow.
+**Why keyless signing.** The usual way to sign images is to keep a private key in a
+repository secret. If that key ever leaks, an attacker can sign malicious images that pass
+verification, and you would not know. Keyless signing skips the stored key entirely. The
+signature is tied to a short-lived certificate proving it came from this repo's workflow,
+and it gets recorded in a public log. There is no standing secret to steal.
 
----
+## A few other choices
 
-## 🛡️ Pipeline design decisions
+- **Workflow permissions start at read-only** and each job adds only what it needs. The
+  default token has far more access than any of these jobs require.
+- **gitleaks scans the full git history**, not just the latest changes (`fetch-depth: 0`).
+  Deleting a secret in a later commit does not help, because it is still sitting in history
+  and still works until someone rotates it.
+- **Each check looks for its files first** before running, so these workflows can be dropped
+  into a repo with no Terraform, or no Dockerfile, without showing red crosses for things
+  that are not there.
+- **The Kubernetes manifests include a default-deny NetworkPolicy.** Listing both `Ingress`
+  and `Egress` flips the pod from allow-everything to deny-everything, and then specific
+  rules add back what is needed: traffic from the same namespace on port 80, and outbound
+  DNS and HTTPS. The outbound rules are still wider than they should be for a real workload,
+  which is flagged in a comment in the file.
 
-**Least-privilege workflow tokens.** Every workflow declares an explicit `permissions:` block
-starting from `contents: read` and adds only what a given job needs — `security-events: write`
-to upload SARIF, `pull-requests: write` for dependency review comments. The default
-`GITHUB_TOKEN` is far broader than any of these jobs require.
+## Running the checks on your own machine
 
-**gitleaks runs against full history, not just the diff.** `fetch-depth: 0` is set for that
-reason. A secret removed in a later commit is still present in history and still valid until
-it is rotated; diff-only scanning gives false comfort.
-
-**Checks are conditional on the relevant files existing.** Each job probes for `*.tf`,
-`Docker/dockerfile`, or YAML before running, so the workflows can be lifted into a repo that
-has only some of them without producing red crosses for absent file types.
-
-**Kubernetes manifests ship with a default-deny NetworkPolicy.** `40-networkpolicy.yaml`
-declares both `Ingress` and `Egress` policy types, which switches the pod from allow-all to
-deny-all, then adds back same-namespace ingress on :80 and egress for DNS and HTTPS. Egress is
-still broader than it should be for a real workload — it allows :80/:443 to any namespace —
-and is marked as such inline.
-
-**SBOM as a build artifact.** An SPDX SBOM is generated per build and uploaded. It is not
-gated on, but it means any image this pipeline produces can be retrospectively checked against
-a new CVE without rebuilding.
-
----
-
-## 📊 Reporting
-
-- SARIF from CodeQL and Trivy lands in the repository **Security** tab, so findings persist
-  and are diffable across runs rather than living in expired job logs.
-- Dependabot raises PRs weekly for Actions, npm, and pip, capped at 10 open to avoid spam.
-- Status badges at the top reflect the latest run on `main`.
-
----
-
-## 🔧 Local Development
-
-**Prerequisites**
-- Terraform >= 1.0
-- Docker
-
-**Run the same checks locally before pushing**
 ```bash
 # Terraform
 terraform -chdir=Terraform fmt -check -recursive
 terraform -chdir=Terraform init -backend=false
 terraform -chdir=Terraform validate
 
-# Dockerfile lint
+# Dockerfile
 docker run --rm -i hadolint/hadolint < Docker/dockerfile
 
-# IaC misconfiguration scan (terraform + kubernetes)
+# Terraform and Kubernetes config check
 docker run --rm -v "${PWD}:/tf" bridgecrew/checkov -d /tf --framework terraform kubernetes
 
-# Secret scan across full history
+# secrets, across the whole history
 docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:latest detect \
   --source /repo --config /repo/.gitleaks.toml --verbose --redact
 
-# Filesystem CVE scan
+# known CVEs in the files
 docker run --rm -v "${PWD}:/src" aquasec/trivy fs /src --severity HIGH,CRITICAL --ignore-unfixed
 ```
 
----
-
-## 📁 Layout
+## Layout
 
 ```
 .
 ├── .github/
 │   ├── workflows/        ci, policy, security, release, badges
 │   └── dependabot.yml
-├── Terraform/main.tf     null_resource stub — a hook for the pipeline
-├── Docker/dockerfile     Alpine stub — a target for Hadolint and Trivy
+├── Terraform/main.tf     placeholder, gives the scanners something to read
+├── Docker/dockerfile     Alpine stub, same reason
 ├── kubernetes/           namespace, serviceaccount, deployment, service, networkpolicy
-└── .gitleaks.toml        secret-scanning rules and reviewed allowlist
+└── .gitleaks.toml        secret scanning rules
 ```
