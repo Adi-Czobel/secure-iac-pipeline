@@ -25,8 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v3
         with:
-          languages: auto
-      - uses: github/codeql-action/autobuild@v3
+          languages: actions
       - uses: github/codeql-action/analyze@v3
 
   dependency-review:
@@ -49,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Trivy Scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           ignore-unfixed: true
@@ -58,6 +57,7 @@ jobs:
           severity: HIGH,CRITICAL
         continue-on-error: true
       - name: Upload Trivy report to GitHub Security tab
+        if: hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif

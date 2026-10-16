@@ -62,7 +62,7 @@ jobs:
 
       # Container vulnerability scan (Trivy) + upload SARIF
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REPO }}:${{ github.ref_name }}
           format: sarif

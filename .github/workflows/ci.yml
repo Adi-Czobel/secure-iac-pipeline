@@ -52,7 +52,7 @@ jobs:
       # Trivy image scan → SARIF to Security tab
       - name: Trivy image scan
         if: hashFiles('Docker/dockerfile') != ''
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: localbuild:${{ github.sha }}
           format: sarif
@@ -61,7 +61,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Upload Trivy SARIF
-        if: hashFiles('Docker/dockerfile') != ''
+        if: hashFiles('Docker/dockerfile') != '' && hashFiles('trivy-image.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-image.sarif
